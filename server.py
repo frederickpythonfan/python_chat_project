@@ -24,6 +24,7 @@ import select
 import socket
 
 import common
+import decorators
 
 
 class ClientState(object):
@@ -38,6 +39,7 @@ class ClientState(object):
         self.username = None
 
 
+@decorators.class_decorator(decorators.logging("logger.csv"))
 class ChatServer(object):
     def __init__(self, port, log_path):
         self.port = port
