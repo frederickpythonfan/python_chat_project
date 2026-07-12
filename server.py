@@ -39,7 +39,7 @@ class ClientState(object):
         self.username = None
 
 
-@decorators.class_decorator(decorators.logging("logger.csv"))
+@decorators.class_decorator(decorators.logging("server_log.csv"))
 class ChatServer(object):
     def __init__(self, port, log_path):
         self.port = port
