@@ -25,59 +25,65 @@ import socket
 import sys
 
 import common
+import decorators
 
 
-def connect(server, port, hello):
-    """Open a blocking TCP connection and send the handshake frame."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((server, port))
-    sock.sendall(common.encode(hello))
-    return sock
+@decorators.class_decorator(decorators.logging("client_log.csv"))
+class ChatClient(object):
+    def __init__(self, server, port, username):
+        self.server = server
+        self.port = port
+        self.username = username
 
+    def connect(self, hello):
+        """Open a blocking TCP connection and send the handshake frame."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((self.server, self.port))
+        sock.sendall(common.encode(hello))
+        return sock
 
-def run_writer(server, port, username):
-    """Read lines from the user and send each to the server."""
-    sock = connect(server, port, common.make_hello(common.MODE_WRITER, username))
-    print("Connected as '%s' (writer). Type messages; Ctrl-C to quit."
-          % username)
-    try:
-        while True:
-            # raw_input in Python 2 / input in Python 3; we target Python 3.
-            text = input()
-            if text == "":
-                continue
-            sock.sendall(common.encode(common.make_msg(text)))
-    except (EOFError, KeyboardInterrupt):
-        print("\nDisconnecting...")
-    except (socket.error, OSError) as exc:
-        print("\nConnection lost: %s" % exc)
-    finally:
-        sock.close()
+    def run_writer(self):
+        """Read lines from the user and send each to the server."""
+        sock = self.connect(common.make_hello(common.MODE_WRITER, self.username))
+        print("Connected as '%s' (writer). Type messages; Ctrl-C to quit."
+              % self.username)
+        try:
+            while True:
+                # raw_input in Python 2 / input in Python 3; we target Python 3.
+                text = input()
+                if text == "":
+                    continue
+                sock.sendall(common.encode(common.make_msg(text)))
+        except (EOFError, KeyboardInterrupt):
+            print("\nDisconnecting...")
+        except (socket.error, OSError) as exc:
+            print("\nConnection lost: %s" % exc)
+        finally:
+            sock.close()
 
-
-def run_reader(server, port):
-    """Receive broadcast chat messages and print them as they arrive."""
-    sock = connect(server, port, common.make_hello(common.MODE_READER))
-    print("Connected (reader). Showing messages; Ctrl-C to quit.")
-    buffer = common.LineBuffer()
-    try:
-        while True:
-            data = sock.recv(4096)
-            if not data:
-                print("Server closed the connection.")
-                break
-            for message in buffer.feed(data):
-                if message.get("type") == common.TYPE_CHAT:
-                    print(common.format_chat_line(
-                        message.get("username", "anonymous"),
-                        message.get("timestamp", ""),
-                        message.get("text", "")))
-    except KeyboardInterrupt:
-        print("\nDisconnecting...")
-    except (socket.error, OSError) as exc:
-        print("\nConnection lost: %s" % exc)
-    finally:
-        sock.close()
+    def run_reader(self):
+        """Receive broadcast chat messages and print them as they arrive."""
+        sock = self.connect(common.make_hello(common.MODE_READER))
+        print("Connected (reader). Showing messages; Ctrl-C to quit.")
+        buffer = common.LineBuffer()
+        try:
+            while True:
+                data = sock.recv(4096)
+                if not data:
+                    print("Server closed the connection.")
+                    break
+                for message in buffer.feed(data):
+                    if message.get("type") == common.TYPE_CHAT:
+                        print(common.format_chat_line(
+                            message.get("username", "anonymous"),
+                            message.get("timestamp", ""),
+                            message.get("text", "")))
+        except KeyboardInterrupt:
+            print("\nDisconnecting...")
+        except (socket.error, OSError) as exc:
+            print("\nConnection lost: %s" % exc)
+        finally:
+            sock.close()
 
 
 def parse_args():
@@ -101,11 +107,12 @@ def main():
     if not args.reader and not args.username:
         sys.exit("Error: specify a mode: -u USERNAME (writer) or -r (reader).")
 
+    client = ChatClient(args.server, args.port, args.username)
     try:
         if args.reader:
-            run_reader(args.server, args.port)
+            client.run_reader()
         else:
-            run_writer(args.server, args.port, args.username)
+            client.run_writer()
     except (socket.error, OSError) as exc:
         sys.exit("Could not connect to %s:%d -- %s"
                  % (args.server, args.port, exc))
