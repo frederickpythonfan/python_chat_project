@@ -26,6 +26,8 @@ import socket
 import common
 import decorators
 
+# TODO: add client counter
+# TODO: log & warn if too many clients (>20)
 
 class ClientState(object):
     """Per-connection bookkeeping the server keeps for each socket."""

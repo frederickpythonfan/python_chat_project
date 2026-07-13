@@ -20,7 +20,7 @@ import common
 import server
 import client
 
-
+# TODO: add unit tests according to exercise
 # --------------------------------------------------------------------------
 # Test doubles
 # --------------------------------------------------------------------------

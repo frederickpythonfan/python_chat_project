@@ -32,6 +32,8 @@ def debug(func):
     return wrapper
 
 
+
+# TODO: make logging with logger module
 def logging(log_file_path : str):
     class Decorator:
         log_file = None
