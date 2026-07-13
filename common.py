@@ -20,6 +20,7 @@ Message types
             timestamp and text of a chat message.
 """
 
+import base64
 import json
 
 # Default TCP port shared by the server (listen) and client (connect).
@@ -33,6 +34,8 @@ MODE_READER = "reader"
 TYPE_HELLO = "hello"
 TYPE_MSG = "msg"
 TYPE_CHAT = "chat"
+TYPE_FILE_MSG = "file_msg"    # writer -> server: "here is a file"
+TYPE_FILE_CHAT = "file_chat"  # server -> readers: broadcast of that file
 
 # Timestamp format used both in the CSV log and on the wire.
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -68,6 +71,42 @@ def make_chat(username, timestamp, text):
 def format_chat_line(username, timestamp, text):
     """Human-readable form a reader prints for one chat message."""
     return "[{0}] {1}: {2}".format(timestamp, username, text)
+
+
+def make_file_msg(filename, data_b64):
+    """Build a file message sent by a writer client.
+
+    ``data_b64`` is the file's bytes, base64-encoded to a string so it
+    can travel inside a JSON line like every other message on the wire.
+    """
+    return {"type": TYPE_FILE_MSG, "filename": filename, "data": data_b64}
+
+
+def make_file_chat(username, timestamp, filename, data_b64):
+    """Build a file message the server broadcasts to readers."""
+    return {
+        "type": TYPE_FILE_CHAT,
+        "username": username,
+        "timestamp": timestamp,
+        "filename": filename,
+        "data": data_b64,
+    }
+
+
+def format_file_line(username, timestamp, filename, size, saved_path):
+    """Human-readable form a reader prints for one received file."""
+    return "[{0}] {1} sent a file: {2} ({3} bytes) -> saved to {4}".format(
+        timestamp, username, filename, size, saved_path)
+
+
+def encode_file_data(raw_bytes):
+    """Base64-encode raw file bytes into the string the wire protocol uses."""
+    return base64.b64encode(raw_bytes).decode("ascii")
+
+
+def decode_file_data(data_b64):
+    """Reverse of :func:`encode_file_data`."""
+    return base64.b64decode(data_b64.encode("ascii"))
 
 
 class LineBuffer(object):

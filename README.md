@@ -44,6 +44,29 @@ every message as `[<date time>] <username>: <message>`. Press **Ctrl-C** to
 disconnect and quit. The server also stops on **Ctrl-C**, closing the log
 file first so no data is lost.
 
+### Commands
+
+A line starting with `/` is a command instead of chat text. Currently
+supported:
+
+```
+/file PATH   Send the file at PATH to the chat (5 MiB limit)
+```
+
+Commands are registered in a small dict in `client.py` (see the
+`@command("name")` decorator), so adding another one later (e.g. `/nick`,
+`/quit`) doesn't require changing the writer's input loop.
+
+A reader that receives a file saves it to a local `received_files/`
+folder (created automatically) and prints a line like:
+
+```
+[2026-07-13 10:00:00] alice sent a file: photo.png (48213 bytes) -> saved to received_files/photo.png
+```
+
+If a file with the same name already exists, the new one is saved as
+`name_1.ext`, `name_2.ext`, etc. rather than overwriting anything.
+
 ## Tests
 
 Unit tests live in `test_chat.py` and run with **pytest**:

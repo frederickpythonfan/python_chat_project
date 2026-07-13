@@ -156,6 +156,9 @@ class ChatServer(object):
                   % (who, state.mode, state.addr[0]))
         elif msg_type == common.TYPE_MSG:
             self._handle_chat(state, message.get("text", ""))
+        elif msg_type == common.TYPE_FILE_MSG:
+            self._handle_file(state, message.get("filename", "file"),
+                               message.get("data", ""))
 
     def _handle_chat(self, state, text):
         """Log an incoming chat line and fan it out to all readers."""
@@ -167,6 +170,28 @@ class ChatServer(object):
         self.log_file.flush()
 
         frame = common.encode(common.make_chat(username, timestamp, text))
+        for other in self.clients.values():
+            if other.mode == common.MODE_READER:
+                other.outgoing += frame
+
+    def _handle_file(self, state, filename, data_b64):
+        """Log a summary of an incoming file and fan it out to all readers."""
+        username = state.username or "anonymous"
+        timestamp = datetime.datetime.now().strftime(common.TIME_FORMAT)
+
+        try:
+            size = len(common.decode_file_data(data_b64))
+        except (ValueError, TypeError):
+            size = 0
+
+        # Log a short summary rather than the (potentially large) base64
+        # payload -- nobody wants megabytes of base64 in a CSV log line.
+        self.log_writer.writerow(
+            [username, timestamp, "[file] %s (%d bytes)" % (filename, size)])
+        self.log_file.flush()
+
+        frame = common.encode(
+            common.make_file_chat(username, timestamp, filename, data_b64))
         for other in self.clients.values():
             if other.mode == common.MODE_READER:
                 other.outgoing += frame
