@@ -22,6 +22,7 @@ Usage::
 
 import argparse
 import os
+from pathlib import Path
 import socket
 import sys
 
@@ -130,6 +131,13 @@ class ChatClient(object):
                             message.get("text", "")))
                     elif msg_type == common.TYPE_FILE_CHAT:
                         self._save_incoming_file(message)
+                    elif msg_type == common.TYPE_RECOGNITION_CHAT:
+                        print(common.format_recognition_line(
+                            message.get("username", "anonymous"),
+                            message.get("timestamp", ""),
+                            message.get("filename", ""),
+                            message.get("model_output")
+                        ))
         except KeyboardInterrupt:
             print("\nDisconnecting...")
         except (socket.error, OSError) as exc:
@@ -171,6 +179,17 @@ def _unique_path(path):
             return candidate
         i += 1
 
+
+@command("recognize")
+def cmd_file(chat_client, sock, args):
+    """/recognize PATH -- recognize objects inside an image"""
+    path = args.strip()
+    if not path:
+        print("Usage: /recognize <path>")
+        return
+    filename = path
+    sock.sendall(common.encode(common.make_recognition_msg(filename)))
+    print(f"Asked to recognize {filename}")
 
 @command("file")
 def cmd_file(chat_client, sock, args):

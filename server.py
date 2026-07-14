@@ -22,6 +22,7 @@ import csv
 import datetime
 import select
 import socket
+from imagerecog import ImageRecognition
 
 import common
 import decorators
@@ -159,6 +160,8 @@ class ChatServer(object):
         elif msg_type == common.TYPE_FILE_MSG:
             self._handle_file(state, message.get("filename", "file"),
                                message.get("data", ""))
+        elif msg_type == common.TYPE_RECOGNITION_MSG:
+            self._handle_recognition(state, message.get("filename"))
 
     def _handle_chat(self, state, text):
         """Log an incoming chat line and fan it out to all readers."""
@@ -195,6 +198,30 @@ class ChatServer(object):
         for other in self.clients.values():
             if other.mode == common.MODE_READER:
                 other.outgoing += frame
+
+    def _handle_recognition(self, state, filename):
+        """Log file recognition and broadcast the objects found"""
+        username = state.username or "anonymous"
+        timestamp = datetime.datetime.now().strftime(common.TIME_FORMAT)
+
+        try:
+           model_out = ImageRecognition().recognize(filename)
+        except Exception as e:
+            print(f"Failed to recognize image: {e}")
+            model_out = None
+
+        # Log a short summary rather than the (potentially large) base64
+        # payload -- nobody wants megabytes of base64 in a CSV log line.
+        self.log_writer.writerow(
+            [username, timestamp, f"[{filename}"])
+        self.log_file.flush()
+        frame = common.encode(
+            common.make_recognition_chat(username, timestamp, filename, model_out))
+
+        for other in self.clients.values():
+            if other.mode == common.MODE_READER:
+                other.outgoing += frame
+
 
     def _drop(self, sock):
         """Remove and close a client socket."""

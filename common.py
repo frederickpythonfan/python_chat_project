@@ -22,6 +22,7 @@ Message types
 
 import base64
 import json
+import textwrap
 
 # Default TCP port shared by the server (listen) and client (connect).
 DEFAULT_PORT = 7777
@@ -36,7 +37,8 @@ TYPE_MSG = "msg"
 TYPE_CHAT = "chat"
 TYPE_FILE_MSG = "file_msg"    # writer -> server: "here is a file"
 TYPE_FILE_CHAT = "file_chat"  # server -> readers: broadcast of that file
-
+TYPE_RECOGNITION_MSG = "recognition_msg"
+TYPE_RECOGNITION_CHAT = "recognition_chat"
 # Timestamp format used both in the CSV log and on the wire.
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -66,7 +68,7 @@ class ServerValidation(type):
                 if not 0 <= byte <= 255:
                     raise ServerFormatException("IP not in byte format!")
 
-        return super().__new__(mcs, name, base, attrs)
+        return super().__new__(mcs, name, bases, attrs)
 
 
 def encode(obj):
@@ -107,6 +109,22 @@ def make_file_msg(filename, data_b64):
     """
     return {"type": TYPE_FILE_MSG, "filename": filename, "data": data_b64}
 
+def make_recognition_msg(filename):
+    """Build a recognition request sent by writer client.
+    Simply pass requested path to recognize
+    """
+    return {"type":TYPE_RECOGNITION_MSG, "filename": str(filename)}
+
+def make_recognition_chat(username, timestamp, filename, model_output):
+    """ Build a message the server broadcasts to readers about recognizing objects"""
+    return {
+        "type": TYPE_RECOGNITION_CHAT,
+        "username": username,
+        "timestamp": timestamp,
+        "filename" : filename,
+        "model_output": model_output
+    }
+
 
 def make_file_chat(username, timestamp, filename, data_b64):
     """Build a file message the server broadcasts to readers."""
@@ -124,6 +142,22 @@ def format_file_line(username, timestamp, filename, size, saved_path):
     return "[{0}] {1} sent a file: {2} ({3} bytes) -> saved to {4}".format(
         timestamp, username, filename, size, saved_path)
 
+
+def format_recognition_line(username, timestamp, filename, model_output):
+    object_list = ""
+    if not model_output:
+        object_list = "Could not find any objects in the image. Either the model failed or the image is objectless"
+    else:
+        for object in model_output:
+            if object["score"] < 0.9:
+                continue
+            object_list += f"Found {object['label']} with {object['score']*100:.2f}% confidence\n"
+    if object_list:
+        object_list = textwrap.indent(object_list, f"[{timestamp}]\t\t->").removesuffix('\n')
+    """Human-readable form a reader prints for one recognized file."""
+    return "[{0}] {1} requested to recognize a file: {2}\n" \
+           "{3}".format(
+        timestamp, username, filename, object_list)
 
 def encode_file_data(raw_bytes):
     """Base64-encode raw file bytes into the string the wire protocol uses."""
