@@ -23,7 +23,8 @@ Message types
 import base64
 import json
 import textwrap
-
+import logging
+logger = logging.getLogger(__name__)
 # Default TCP port shared by the server (listen) and client (connect).
 DEFAULT_PORT = 7777
 
@@ -68,6 +69,9 @@ class ServerValidation(type):
                 if not 0 <= byte <= 255:
                     raise ServerFormatException("IP not in byte format!")
 
+        logger.debug("server validation passed for class %s (HOST=%s, PORT=%s)",
+                     name, attrs[ServerValidation._HOST_NAME],
+                     attrs[ServerValidation._PORT_NAME])
         return super().__new__(mcs, name, bases, attrs)
 
 
@@ -193,7 +197,8 @@ class LineBuffer(object):
                 continue
             try:
                 messages.append(json.loads(line.decode(_ENCODING)))
-            except (ValueError, UnicodeDecodeError):
+            except (ValueError, UnicodeDecodeError) as exc:
                 # Ignore malformed frames rather than crash the peer.
+                logger.warning("dropping malformed frame (%s): %r", exc, line[:200])
                 continue
         return messages

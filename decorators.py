@@ -1,7 +1,8 @@
-import csv
+import logging as _logging
 from functools import wraps
 import inspect
-import datetime
+
+_module_logger = _logging.getLogger(__name__)
 
 
 def class_decorator(decorator):
@@ -19,48 +20,46 @@ def class_decorator(decorator):
 def debug(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        print(f"Called {func.__name__} with {args},{kwargs}")
+        _module_logger.debug("Called %s with %s,%s", func.__name__, args, kwargs)
         try:
             return_value = func(*args, **kwargs)
         except Exception as e:
-            print(f"{func.__name__} raised an exception: {e}")
+            _module_logger.exception("%s raised an exception: %s", func.__name__, e)
             raise
         else:
-            print(f"{func.__name__} returned {return_value}")
+            _module_logger.debug("%s returned %s", func.__name__, return_value)
             return return_value
 
     return wrapper
 
 
+def logging(logger_name: str):
+    """Class-method decorator that logs every call via the ``logging`` module.
 
-# TODO: make logging with logger module
-def logging(log_file_path : str):
+    ``logger_name`` is passed straight to ``logging.getLogger``, so callers
+    can keep using a per-class identifier (e.g. "server_log", "client_log")
+    to get a dedicated logger, which is routed through whatever handlers
+    logging_config.setup_logging() has configured (console + rotating files).
+    """
+    logger = _logging.getLogger(logger_name)
+
     class Decorator:
-        log_file = None
-
-        def __init__(self, log_path : str):
-            need_header = False
-            try:
-                with open(log_path, "r"):
-                    pass
-            except FileNotFoundError:
-                need_header = True
-            try:
-                Decorator.log_file = open(log_path, "a", newline="")
-            except OSError:
-                print(f"Couldn't open log file: {log_path}")
-                raise
-            self.log_writer = csv.writer(Decorator.log_file)
-            if need_header:
-                self.log_writer.writerow(["DateTime","Function Name", "Args"])
-                Decorator.log_file.flush()
+        def __init__(self):
+            self.logger = logger
 
         def __call__(self, func):
+            @wraps(func)
             def wrapper(*args, **kwargs):
-                row = [datetime.datetime.now(), func.__name__, *args]
-                self.log_writer.writerow(row)
-                Decorator.log_file.flush()
-                return func(*args, **kwargs)
+                self.logger.debug("Called %s with args=%s kwargs=%s",
+                                   func.__name__, args, kwargs)
+                try:
+                    return_value = func(*args, **kwargs)
+                except Exception as e:
+                    self.logger.exception("%s raised an exception: %s",
+                                           func.__name__, e)
+                    raise
+                else:
+                    self.logger.debug("%s returned %s", func.__name__, return_value)
+                    return return_value
             return wrapper
-    return Decorator(log_file_path)
-
+    return Decorator()

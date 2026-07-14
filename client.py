@@ -25,6 +25,9 @@ import os
 from pathlib import Path
 import socket
 import sys
+from logging_config import setup_logging
+import logging
+logger = logging.getLogger(__name__)
 
 import common
 import decorators
@@ -59,7 +62,7 @@ def command(name):
     return register
 
 
-@decorators.class_decorator(decorators.logging("client_log.csv"))
+@decorators.class_decorator(decorators.logging("client.calls"))
 class ChatClient(object):
     def __init__(self, server_data : common.ServerValidation, username):
         self.server = server_data.HOST
@@ -68,9 +71,12 @@ class ChatClient(object):
 
     def connect(self, hello):
         """Open a blocking TCP connection and send the handshake frame."""
+        logger.info("connecting to %s:%d as %s", self.server, self.port,
+                    hello.get("mode"))
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect((self.server, self.port))
         sock.sendall(common.encode(hello))
+        logger.debug("handshake sent: %s", hello)
         return sock
 
     def dispatch_command(self, sock, text):
@@ -82,13 +88,16 @@ class ChatClient(object):
         name, _, args = text[1:].partition(" ")
         handler = COMMANDS.get(name)
         if handler is None:
+            logger.warning("unknown command: /%s", name)
             return False
+        logger.debug("dispatching command /%s with args=%r", name, args)
         handler(self, sock, args)
         return True
 
     def run_writer(self):
         """Read lines from the user and send each to the server."""
         sock = self.connect(common.make_hello(common.MODE_WRITER, self.username))
+        logger.info("writer session started for %s", self.username)
         print("Connected as '%s' (writer). Type messages; Ctrl-C to quit."
               % self.username)
         print("Commands: %s"
@@ -103,27 +112,35 @@ class ChatClient(object):
                     if not self.dispatch_command(sock, text):
                         print("Unknown command: /%s" % text[1:].split(" ")[0])
                     continue
+                logger.debug("sending chat message (%d char(s))", len(text))
                 sock.sendall(common.encode(common.make_msg(text)))
         except (EOFError, KeyboardInterrupt):
+            logger.info("writer session for %s ending (user requested)", self.username)
             print("\nDisconnecting...")
         except (socket.error, OSError) as exc:
+            logger.error("writer session for %s lost connection: %s", self.username, exc)
             print("\nConnection lost: %s" % exc)
         finally:
             sock.close()
+            logger.debug("writer socket closed")
 
     def run_reader(self):
         """Receive broadcast chat messages and print them as they arrive."""
         sock = self.connect(common.make_hello(common.MODE_READER))
+        logger.info("reader session started")
         print("Connected (reader). Showing messages; Ctrl-C to quit.")
         buffer = common.LineBuffer()
         try:
             while True:
                 data = sock.recv(4096)
                 if not data:
+                    logger.info("server closed the connection")
                     print("Server closed the connection.")
                     break
+                logger.debug("received %d byte(s) from server", len(data))
                 for message in buffer.feed(data):
                     msg_type = message.get("type")
+                    logger.debug("received message type=%s", msg_type)
                     if msg_type == common.TYPE_CHAT:
                         print(common.format_chat_line(
                             message.get("username", "anonymous"),
@@ -139,11 +156,14 @@ class ChatClient(object):
                             message.get("model_output")
                         ))
         except KeyboardInterrupt:
+            logger.info("reader session ending (user requested)")
             print("\nDisconnecting...")
         except (socket.error, OSError) as exc:
+            logger.error("reader session lost connection: %s", exc)
             print("\nConnection lost: %s" % exc)
         finally:
             sock.close()
+            logger.debug("reader socket closed")
 
     def _save_incoming_file(self, message):
         """Decode and save a broadcast file message, then notify the user."""
@@ -152,7 +172,8 @@ class ChatClient(object):
         filename = message.get("filename") or "file"
         try:
             raw = common.decode_file_data(message.get("data", ""))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
+            logger.warning("corrupted file from %s ('%s'): %s", username, filename, exc)
             print("Received a corrupted file from %s; discarding." % username)
             return
 
@@ -163,6 +184,8 @@ class ChatClient(object):
             os.path.join(RECEIVED_FILES_DIR, os.path.basename(filename)))
         with open(dest, "wb") as f:
             f.write(raw)
+        logger.info("saved file from %s: '%s' (%d bytes) -> %s",
+                    username, filename, len(raw), dest)
         print(common.format_file_line(username, timestamp, filename,
                                        len(raw), dest))
 
@@ -185,10 +208,12 @@ def cmd_file(chat_client, sock, args):
     """/recognize PATH -- recognize objects inside an image"""
     path = args.strip()
     if not path:
+        logger.warning("/recognize called with no path")
         print("Usage: /recognize <path>")
         return
     filename = path
     sock.sendall(common.encode(common.make_recognition_msg(filename)))
+    logger.info("requested recognition for '%s'", filename)
     print(f"Asked to recognize {filename}")
 
 @command("file")
@@ -196,15 +221,19 @@ def cmd_file(chat_client, sock, args):
     """/file PATH -- read a local file and send it to the chat."""
     path = args.strip()
     if not path:
+        logger.warning("/file called with no path")
         print("Usage: /file <path>")
         return
     try:
         with open(path, "rb") as f:
             raw = f.read()
     except OSError as exc:
+        logger.error("couldn't read '%s': %s", path, exc)
         print("Couldn't read '%s': %s" % (path, exc))
         return
     if len(raw) > MAX_FILE_SIZE:
+        logger.warning("'%s' is %d bytes, over the %d byte limit",
+                        path, len(raw), MAX_FILE_SIZE)
         print("'%s' is %d bytes, over the %d byte limit."
               % (path, len(raw), MAX_FILE_SIZE))
         return
@@ -212,6 +241,7 @@ def cmd_file(chat_client, sock, args):
     filename = os.path.basename(path)
     data_b64 = common.encode_file_data(raw)
     sock.sendall(common.encode(common.make_file_msg(filename, data_b64)))
+    logger.info("sent file '%s' (%d bytes)", filename, len(raw))
     print("Sent file '%s' (%d bytes)." % (filename, len(raw)))
 
 
@@ -230,15 +260,21 @@ def parse_args():
 
 
 def main():
+    setup_logging()
     args = parse_args()
     if args.reader and args.username:
+        logger.error("both reader and writer mode requested -- aborting")
         sys.exit("Error: choose either reader (-r) or writer (-u), not both.")
     if not args.reader and not args.username:
+        logger.error("no mode specified -- aborting")
         sys.exit("Error: specify a mode: -u USERNAME (writer) or -r (reader).")
 
     class ClientData(metaclass=common.ServerValidation):
         HOST = args.server
         PORT = args.port
+    logger.info("starting client, target=%s:%d, mode=%s",
+                ClientData.HOST, ClientData.PORT,
+                "reader" if args.reader else "writer")
     client = ChatClient(ClientData, args.username)
     try:
         if args.reader:
@@ -246,6 +282,8 @@ def main():
         else:
             client.run_writer()
     except (socket.error, OSError) as exc:
+        logger.error("could not connect to %s:%d -- %s",
+                     ClientData.HOST, ClientData.PORT, exc)
         sys.exit("Could not connect to %s:%d -- %s"
                  % (ClientData.HOST, ClientData.PORT, exc))
 

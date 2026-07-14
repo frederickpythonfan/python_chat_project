@@ -23,12 +23,13 @@ import datetime
 import select
 import socket
 from imagerecog import ImageRecognition
+from logging_config import setup_logging
+import logging
+logger = logging.getLogger(__name__)
 
 import common
 import decorators
 
-# TODO: add client counter
-# TODO: log & warn if too many clients (>20)
 
 class ClientState(object):
     """Per-connection bookkeeping the server keeps for each socket."""
@@ -42,7 +43,7 @@ class ClientState(object):
         self.username = None
 
 
-@decorators.class_decorator(decorators.logging("server_log.csv"))
+@decorators.class_decorator(decorators.logging("server.calls"))
 class ChatServer(object):
     def __init__(self, port, log_path):
         self.port = port
@@ -62,12 +63,15 @@ class ChatServer(object):
             with open(self.log_path, "r"):
                 pass
         except IOError:
-            need_header = True
+           need_header = True
         self.log_file = open(self.log_path, "a", newline="")
         self.log_writer = csv.writer(self.log_file)
         if need_header:
             self.log_writer.writerow(["Username", "DateTime", "Message"])
             self.log_file.flush()
+            logger.info("opened new server message log at %s", self.log_path)
+        else:
+            logger.debug("appending to existing server message log at %s", self.log_path)
 
     def open_socket(self):
         """Create the listening socket in non-blocking mode."""
@@ -76,30 +80,37 @@ class ChatServer(object):
         self.listen_sock.bind(("", self.port))
         self.listen_sock.listen(5)
         self.listen_sock.setblocking(False)
+        logger.debug("listening socket bound to port %d, backlog=5, non-blocking", self.port)
 
     def close(self):
         """Close all client sockets, the listener, and the log file."""
+        logger.info("shutting down server, dropping %d connected client(s)",
+                    len(self.clients))
         for state in list(self.clients.values()):
             self._drop(state.sock)
         if self.listen_sock is not None:
             self.listen_sock.close()
+            logger.debug("listening socket closed")
         if self.log_file is not None:
             self.log_file.flush()
             self.log_file.close()
+            logger.debug("message log file closed")
 
     # -- main loop --------------------------------------------------------
 
     def run(self):
         self.open_log()
         self.open_socket()
-        print("Chat server listening on port %d (logging to %s)"
+        logger.info("Chat server listening on port %d (logging to %s)"
               % (self.port, self.log_path))
-        print("Press Ctrl-C to stop.")
+        logger.info("Press Ctrl-C to stop.")
         while True:
             read_socks = [self.listen_sock] + list(self.clients)
             write_socks = [s for s, st in self.clients.items() if st.outgoing]
             readable, writable, _ = select.select(
                 read_socks, write_socks, [])
+            logger.debug("select() returned %d readable, %d writable socket(s)",
+                         len(readable), len(writable))
 
             for sock in readable:
                 if sock is self.listen_sock:
@@ -115,21 +126,26 @@ class ChatServer(object):
     def _accept(self):
         try:
             conn, addr = self.listen_sock.accept()
-        except (socket.error, OSError):
+        except (socket.error, OSError) as exc:
+            logger.warning("accept() failed: %s", exc)
             return
         conn.setblocking(False)
+        logger.info("connecting to client %s", conn)
         self.clients[conn] = ClientState(conn, addr)
 
     def _handle_read(self, sock):
         try:
             data = sock.recv(4096)
-        except (socket.error, OSError):
+        except (socket.error, OSError) as exc:
+            logger.warning("recv() failed on %s: %s", sock, exc)
             self._drop(sock)
             return
         if not data:
             # Peer closed the connection cleanly.
+            logger.info("closed connection by client")
             self._drop(sock)
             return
+        logger.debug("received %d byte(s) from %s", len(data), sock)
         state = self.clients[sock]
         for message in state.buffer.feed(data):
             self._dispatch(state, message)
@@ -140,20 +156,23 @@ class ChatServer(object):
             return
         try:
             sent = sock.send(state.outgoing)
-        except (socket.error, OSError):
+        except (socket.error, OSError) as exc:
+            logger.warning("send() failed on %s: %s", sock, exc)
             self._drop(sock)
             return
+        logger.debug("sent %d byte(s) to %s", sent, sock)
         state.outgoing = state.outgoing[sent:]
 
     # -- protocol handling ------------------------------------------------
 
     def _dispatch(self, state, message):
         msg_type = message.get("type")
+        logger.debug("dispatching message type=%s from %s", msg_type, state.addr)
         if msg_type == common.TYPE_HELLO:
             state.mode = message.get("mode")
             state.username = message.get("username")
             who = state.username or "reader"
-            print("Client connected: %s (%s) from %s"
+            logger.info("Client connected: %s (%s) from %s"
                   % (who, state.mode, state.addr[0]))
         elif msg_type == common.TYPE_MSG:
             self._handle_chat(state, message.get("text", ""))
@@ -171,11 +190,15 @@ class ChatServer(object):
         # Persist to the CSV log first so nothing is lost on a crash.
         self.log_writer.writerow([username, timestamp, text])
         self.log_file.flush()
+        logger.info("chat message from %s (%d char(s))", username, len(text))
 
         frame = common.encode(common.make_chat(username, timestamp, text))
+        readers = 0
         for other in self.clients.values():
             if other.mode == common.MODE_READER:
                 other.outgoing += frame
+                readers += 1
+        logger.debug("queued chat message from %s to %d reader(s)", username, readers)
 
     def _handle_file(self, state, filename, data_b64):
         """Log a summary of an incoming file and fan it out to all readers."""
@@ -184,7 +207,9 @@ class ChatServer(object):
 
         try:
             size = len(common.decode_file_data(data_b64))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
+            logger.warning("couldn't decode file data from %s (%s): %s",
+                            username, filename, exc)
             size = 0
 
         # Log a short summary rather than the (potentially large) base64
@@ -192,22 +217,27 @@ class ChatServer(object):
         self.log_writer.writerow(
             [username, timestamp, "[file] %s (%d bytes)" % (filename, size)])
         self.log_file.flush()
+        logger.info("file '%s' (%d bytes) received from %s", filename, size, username)
 
         frame = common.encode(
             common.make_file_chat(username, timestamp, filename, data_b64))
+        readers = 0
         for other in self.clients.values():
             if other.mode == common.MODE_READER:
                 other.outgoing += frame
+                readers += 1
+        logger.debug("queued file '%s' from %s to %d reader(s)", filename, username, readers)
 
     def _handle_recognition(self, state, filename):
         """Log file recognition and broadcast the objects found"""
         username = state.username or "anonymous"
         timestamp = datetime.datetime.now().strftime(common.TIME_FORMAT)
 
+        logger.info("recognition requested by %s for '%s'", username, filename)
         try:
            model_out = ImageRecognition().recognize(filename)
         except Exception as e:
-            print(f"Failed to recognize image: {e}")
+            logger.exception(f"Failed to recognize image: {e}")
             model_out = None
 
         # Log a short summary rather than the (potentially large) base64
@@ -218,20 +248,25 @@ class ChatServer(object):
         frame = common.encode(
             common.make_recognition_chat(username, timestamp, filename, model_out))
 
+        readers = 0
         for other in self.clients.values():
             if other.mode == common.MODE_READER:
                 other.outgoing += frame
+                readers += 1
+        logger.debug("queued recognition result for '%s' to %d reader(s)", filename, readers)
 
 
     def _drop(self, sock):
         """Remove and close a client socket."""
         state = self.clients.pop(sock, None)
         if state is not None and state.username:
-            print("Client disconnected: %s" % state.username)
+            logger.info("Client disconnected: %s" % state.username)
+        else:
+            logger.debug("dropping unnamed/reader connection %s", sock)
         try:
             sock.close()
-        except (socket.error, OSError):
-            pass
+        except (socket.error, OSError) as exc:
+            logger.debug("error while closing socket %s: %s", sock, exc)
 
 
 def parse_args():
@@ -245,15 +280,17 @@ def parse_args():
 
 
 def main():
+    setup_logging()
     args = parse_args()
     server = ChatServer(args.port, args.log)
+    logger.info("booting up server...")
     try:
         server.run()
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        logger.critical("received keyboard interrupt, shutting down...")
     finally:
         server.close()
-        print("Log file closed. Bye.")
+        logger.debug("closing log file")
 
 
 if __name__ == "__main__":
