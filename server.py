@@ -22,7 +22,7 @@ import csv
 import datetime
 import select
 import socket
-from imagerecog import ImageRecognition
+from recognition import ImageRecognition
 from logging_config import setup_logging
 import logging
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ class ChatServer(object):
         logger.debug("listening socket bound to port %d, backlog=5, non-blocking", self.port)
 
     def close(self):
-        """Close all client sockets, the listener, and the log file."""
+        """Close all client sockets, the listener, and the log file. Write image cache to disk"""
         logger.info("shutting down server, dropping %d connected client(s)",
                     len(self.clients))
         for state in list(self.clients.values()):
@@ -95,6 +95,9 @@ class ChatServer(object):
             self.log_file.flush()
             self.log_file.close()
             logger.debug("message log file closed")
+
+        logger.debug("writing recognition cache to file")
+        ImageRecognition().save_cache_to_file()
 
     # -- main loop --------------------------------------------------------
 

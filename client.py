@@ -100,6 +100,8 @@ class ChatClient(object):
         logger.info("writer session started for %s", self.username)
         print("Connected as '%s' (writer). Type messages; Ctrl-C to quit."
               % self.username)
+
+
         print("Commands: %s"
               % ", ".join("/%s" % name for name in sorted(COMMANDS)))
         try:
@@ -211,7 +213,7 @@ def cmd_file(chat_client, sock, args):
         logger.warning("/recognize called with no path")
         print("Usage: /recognize <path>")
         return
-    filename = path
+    filename = Path(RECEIVED_FILES_DIR) / path
     sock.sendall(common.encode(common.make_recognition_msg(filename)))
     logger.info("requested recognition for '%s'", filename)
     print(f"Asked to recognize {filename}")
