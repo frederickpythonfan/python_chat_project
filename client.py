@@ -50,7 +50,6 @@ RECEIVED_FILES_DIR = "received_files"
 
 COMMANDS = {}
 
-
 def command(name):
     """Register a writer-mode handler to run for '/<name> ...' input."""
     def register(func):
@@ -61,9 +60,9 @@ def command(name):
 
 @decorators.class_decorator(decorators.logging("client_log.csv"))
 class ChatClient(object):
-    def __init__(self, server, port, username):
-        self.server = server
-        self.port = port
+    def __init__(self, server_data : common.ServerValidation, username):
+        self.server = server_data.HOST
+        self.port = server_data.PORT
         self.username = username
 
     def connect(self, hello):
@@ -218,7 +217,10 @@ def main():
     if not args.reader and not args.username:
         sys.exit("Error: specify a mode: -u USERNAME (writer) or -r (reader).")
 
-    client = ChatClient(args.server, args.port, args.username)
+    class ClientData(metaclass=common.ServerValidation):
+        HOST = args.server
+        PORT = args.port
+    client = ChatClient(ClientData, args.username)
     try:
         if args.reader:
             client.run_reader()
@@ -226,7 +228,7 @@ def main():
             client.run_writer()
     except (socket.error, OSError) as exc:
         sys.exit("Could not connect to %s:%d -- %s"
-                 % (args.server, args.port, exc))
+                 % (ClientData.HOST, ClientData.PORT, exc))
 
 
 if __name__ == "__main__":

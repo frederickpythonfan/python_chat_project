@@ -42,6 +42,32 @@ TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 _ENCODING = "utf-8"
 
+class ServerFormatException(Exception):
+    pass
+
+
+class ServerValidation(type):
+    _PORT_NAME = "PORT"
+    _HOST_NAME = "HOST"
+    def __new__(mcs, name, bases, attrs):
+        if not 0 <= attrs[ServerValidation._PORT_NAME] <= 2**16-1:
+            raise ServerFormatException("Port must be 16 bit value")
+        if not isinstance(attrs[ServerValidation._HOST_NAME], str):
+            raise ServerFormatException("Server must be a string")
+        try:
+            ip_bytes : list[int] = list(map(int, attrs[ServerValidation._HOST_NAME].split('.')))
+        except ValueError as e:
+            if not attrs[ServerValidation._HOST_NAME] == "localhost":
+                raise ServerFormatException from e
+        else:
+            if len(ip_bytes) != 4:
+                raise ServerFormatException("IP must be 4 bytes long!")
+            for byte in ip_bytes:
+                if not 0 <= byte <= 255:
+                    raise ServerFormatException("IP not in byte format!")
+
+        return super().__new__(mcs, name, base, attrs)
+
 
 def encode(obj):
     """Serialise a protocol object to a newline-terminated UTF-8 frame."""
